@@ -10,7 +10,7 @@ flask==3.0.0
 # HTTP клієнт для асинхронних запитів
 aiohttp==3.9.1
 aiofiles==23.2.1
-httpx==0.25.2
+httpx>=0.23.0,<0.24.0
 
 # Парсинг HTML
 beautifulsoup4==4.12.2
