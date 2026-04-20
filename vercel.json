@@ -16,14 +16,8 @@
       "dest": "api/cron.py"
     },
     {
-      "src": "(.*)",
+      "src": "/(.*)",
       "dest": "dashboardgimini.py"
-    }
-  ],
-  "crons": [
-    {
-      "path": "/api/cron",
-      "schedule": "0 0 * * *"
     }
   ]
 }
