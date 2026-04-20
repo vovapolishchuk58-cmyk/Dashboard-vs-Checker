@@ -1,0 +1,13 @@
+.env
+tracked_products.json*
+__pycache__/
+*.pyc
+env/
+venv/
+.vercel
+*.lock
+migration_script.py
+supabase_setup.sql
+task.md
+implementation_plan.md
+walkthrough.md

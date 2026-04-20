@@ -1,0 +1,24 @@
+# Requirements для Price Checker & Dashboard
+# ================================================================
+
+# Веб-фреймворк для dashboard
+dash==2.14.2
+dash-core-components==2.0.0
+dash-html-components==2.0.0
+
+# HTTP клієнт для асинхронних запитів
+aiohttp==3.9.1
+aiofiles==23.2.1
+
+# Парсинг HTML
+beautifulsoup4==4.12.2
+lxml==4.9.3
+
+# Робота з даними
+pandas==2.1.4
+
+# Змінні оточення
+python-dotenv==1.0.0
+
+# Додатково (опціонально)
+requests==2.31.0
