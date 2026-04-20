@@ -257,8 +257,6 @@ def get_row_style_by_code(code: str) -> dict:
 
 app = dash.Dash(__name__, prevent_initial_callbacks='initial_duplicate')
 server = app.server
-app = server        # Alias for Vercel
-application = server # Alias for Vercel discovery
 app.title = "🛍️ Моніторинг товарів"
 
 # --- CSS зі змінними ---
@@ -1305,6 +1303,11 @@ def delete_product(n_clicks_list, refresh_trigger):
     except Exception:
         raise PreventUpdate
 
+
+
+# Аліас сервера для Vercel
+application = server
+app = server
 
 if __name__ == '__main__':
     app.run(debug=False, host='0.0.0.0', port=8050)
