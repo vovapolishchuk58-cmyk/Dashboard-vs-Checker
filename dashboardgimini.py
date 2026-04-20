@@ -1,11 +1,9 @@
 # dashboardgimini.py (UI-only) - DARK MODE ENABLED - FIXED VERSION
 # ------------------------------------------------------------
 # ✅ ВИПРАВЛЕННЯ:
-# - Використання спільних модулів file_lock.py та product_data.py
+# - Використання Supabase для зберігання даних
 # - Видалено дубльовані функції нормалізації та I/O
-# - Додано unified file-lock для всіх операцій з JSON
-# ✅ ДОДАТКОВО (NEW):
-# - Обробка TimeoutError від lock у колбеках (UI не "зависає" мовчки)
+# - Видалено застарілий локальний механізм блокування файлів
 # ------------------------------------------------------------
 
 import os
@@ -252,17 +250,6 @@ def get_row_style_by_code(code: str) -> dict:
     return {'backgroundColor': 'var(--bg-card)'}
 
 
-def warn_file_busy_span():
-    return html.Span(
-        "⏳ Файл даних зайнятий (йде оновлення/запис). Спробуйте ще раз через 5–10 секунд.",
-        style={
-            'color': 'var(--warning-text)',
-            'padding': '10px',
-            'backgroundColor': 'var(--warning-bg)',
-            'borderRadius': '8px',
-            'display': 'block'
-        }
-    )
 
 # =========================================================================
 # 3. DASH ІНТЕРФЕЙС
@@ -761,9 +748,6 @@ def set_supplier_options(n_refresh, n_intervals):
         datalist_options = format_datalist_options(suppliers)
         return filter_options, datalist_options
 
-    except TimeoutError:
-        # ✅ NEW: файл зайнятий (lock timeout)
-        return [], []
 
     except Exception:
         return [], []
@@ -784,8 +768,6 @@ def set_category_options(n_refresh, n_intervals):
         datalist_options = format_datalist_options(categories)
         return filter_options, datalist_options
 
-    except TimeoutError:
-        return [], []
 
     except Exception:
         return [], []
@@ -1196,9 +1178,6 @@ def save_edit(n_clicks, item_url, product_name, supplier, category, color,
         )
         return msg, (refresh_trigger or 0) + 1, {**MODAL_OVERLAY_STYLE, 'display': 'none'}, None
 
-    except TimeoutError:
-        # ✅ NEW
-        return warn_file_busy_span(), dash.no_update, dash.no_update, dash.no_update
 
     except Exception as e:
         return html.Span(f"{str(e)}", style={'color': 'var(--danger)'}), dash.no_update, dash.no_update, dash.no_update
@@ -1287,8 +1266,6 @@ def refresh_single_product(n_clicks_list, refresh_trigger):
         )
         return msg, (refresh_trigger or 0) + 1
 
-    except TimeoutError:
-        return warn_file_busy_span(), dash.no_update
     except Exception as e:
         logger.error(f"Error in refresh_single_product: {e}")
         return html.Span(f"{str(e)}", style={'color': 'var(--danger)'}), dash.no_update
@@ -1322,9 +1299,6 @@ def delete_product(n_clicks_list, refresh_trigger):
         )
         return msg, (refresh_trigger or 0) + 1
 
-    except TimeoutError:
-        # ✅ NEW: avoid silent UI freeze
-        return warn_file_busy_span(), dash.no_update
 
     except Exception:
         raise PreventUpdate
