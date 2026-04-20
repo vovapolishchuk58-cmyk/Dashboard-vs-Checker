@@ -257,6 +257,7 @@ def get_row_style_by_code(code: str) -> dict:
 
 app = dash.Dash(__name__, prevent_initial_callbacks='initial_duplicate')
 server = app.server
+app = server # Alias for Vercel
 app.title = "🛍️ Моніторинг товарів"
 
 # --- CSS зі змінними ---
