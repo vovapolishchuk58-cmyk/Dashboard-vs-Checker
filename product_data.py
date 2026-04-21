@@ -122,19 +122,18 @@ def save_products(products: List[Dict]) -> None:
             clean_products.append(cp)
 
         response = supabase.table("products").upsert(clean_products, on_conflict="url").execute()
-        print(f"✓ Дані успішно збережено в Supabase ({len(response.data)} задіяних рядків)")
+        print(f"[OK] Data saved to Supabase ({len(response.data)} rows)")
     except Exception as e:
-        print(f"❌ Помилка збереження в Supabase: {e}")
+        print(f"[ERROR] Supabase save failed: {e}")
 
 
 def update_products_locked(mutator_fn: Callable[[List[Dict]], List[Dict]]) -> None:
     """
-    Раніше використовувалось для створення блокування файлу (lock).
-    В Supabase ми можемо просто отримати поточні дані, виконати мутатор та зберегти їх.
+    Previously used for file locking. In Supabase, we just load, mutate, and save.
     """
     try:
         products = load_products()
         mutated_products = mutator_fn(products)
         save_products(mutated_products)
     except Exception as e:
-         print(f"❌ Помилка під час update_products_locked: {e}")
+         print(f"[ERROR] update_products_locked failed: {e}")

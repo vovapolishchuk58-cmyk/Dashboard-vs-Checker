@@ -14,8 +14,9 @@ app = Flask(__name__)
 @app.route('/api/cron')
 def trigger_checker():
     try:
-        # Запускаємо асинхронну функцію перевірки
-        asyncio.run(check_products())
+        # Запускаємо асинхронну функцію перевірки з лімітом часу (25 секунд)
+        # Це дозволяє завершити запит до того, як cron-job.org або Vercel скинуть з'єднання (30-60с)
+        asyncio.run(check_products(max_runtime=25))
         return jsonify({"status": "success", "message": "Checker triggered successfully"}), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

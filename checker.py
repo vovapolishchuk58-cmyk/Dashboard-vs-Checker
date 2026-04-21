@@ -21,6 +21,7 @@ load_dotenv()
 
 from product_data import (
     load_products,
+    save_products,
     update_products_locked,
     normalize_product_defaults,
 )
@@ -236,7 +237,7 @@ async def fetch_page_with_retry(
                         (BACKOFF_BASE_SECONDS ** attempt) + random.uniform(0, 1.0),
                     )
                     logger.warning(
-                        f"⚠️ {status} для {url} | retry {attempt+1}/{MAX_RETRIES} через {backoff:.1f}s"
+                        f"[RETRY] {status} for {url} | retry {attempt+1}/{MAX_RETRIES} in {backoff:.1f}s"
                     )
                     await asyncio.sleep(backoff)
                     continue
@@ -287,6 +288,8 @@ def parse_product_logic(
         "price": None,
         "price_text_raw": None,
         "image_url": None,
+        "product_name": None,  # NEW: Scraped name
+        "color": None,         # NEW: Scraped color
         "selector_error": None,
         "used_method": "selector", # Tracking which method succeeded
     }
@@ -320,6 +323,54 @@ def parse_product_logic(
             prop = meta.get("property") or meta.get("name")
             if prop:
                 meta_data[prop] = meta.get("content")
+    except Exception:
+        pass
+
+    # --- 2.5 Extract Scraped Product Name ---
+    try:
+        # Priority 1: JSON-LD name
+        scraped_name = json_ld_data.get("name")
+        
+        # Priority 2: Meta tags
+        if not scraped_name:
+            scraped_name = meta_data.get("og:title") or meta_data.get("twitter:title")
+        
+        # Priority 3: H1 tag
+        if not scraped_name:
+            h1 = soup.find("h1")
+            scraped_name = safe_get_text(h1) if h1 else None
+            
+        # Priority 4: Title tag
+        if not scraped_name:
+            scraped_name = safe_get_text(soup.title)
+            
+        result["product_name"] = scraped_name
+        
+        # --- 2.6 Extract Scraped Color ---
+        # Often in JSON-LD as 'color'
+        scraped_color = json_ld_data.get("color")
+        
+        # Fallback 1: JSON-LD additionalProperty
+        if not scraped_color and "additionalProperty" in json_ld_data:
+            for prop in json_ld_data["additionalProperty"]:
+                if prop.get("name") in ("Color", "Колір", "Цвет"):
+                    scraped_color = prop.get("value")
+                    break
+
+        if not scraped_color:
+             # Fallback 2: Meta tags
+             scraped_color = meta_data.get("product:color") or meta_data.get("color")
+        
+        if not scraped_color:
+            # Fallback 3: Itemprop
+            color_el = soup.find(attrs={"itemprop": "color"})
+            if color_el:
+                scraped_color = safe_get_text(color_el)
+
+        if isinstance(scraped_color, dict): # Handle nested objects
+            scraped_color = scraped_color.get("name")
+            
+        result["color"] = str(scraped_color).strip() if scraped_color else None
     except Exception:
         pass
 
@@ -552,18 +603,18 @@ async def send_telegram_async(session: aiohttp.ClientSession, message: str, phot
     try:
         async with session.post(url, json=payload) as resp:
             if resp.status == 200:
-                logger.info(f"✅ Telegram ({method}): повідомлення надіслано")
+                logger.info(f"[TELEGRAM] Message sent successfully")
             else:
-                logger.error(f"❌ Telegram error ({method}): HTTP {resp.status}")
+                logger.error(f"[TELEGRAM] Error: HTTP {resp.status}")
                 error_text = await resp.text()
                 logger.error(f"Response: {error_text[:200]}")
                 
                 # If sendPhoto failed, try falling back to plain message
                 if photo_url:
-                    logger.warning("⚠️ Спроба відправити без фото після помилки...")
+                    logger.warning("[TELEGRAM] Attempting fallback to text-only message...")
                     await send_telegram_async(session, message, photo_url=None)
     except Exception as e:
-        logger.error(f"❌ Telegram exception: {e}")
+        logger.error(f"[TELEGRAM] Exception: {e}")
 
 
 async def notify_selector_error(
@@ -601,10 +652,14 @@ def _merge_updates_into_products(products: List[Dict], updates_by_url: Dict[str,
     return products
 
 
-async def check_products() -> None:
+async def check_products(max_runtime: int = 50) -> None:
+    """
+    Основна функція перевірки з урахуванням лімітів часу Vercel.
+    max_runtime: Максимальний час виконання в секундах.
+    """
+    start_time = time.time()
+    
     # ✅ FIX: asyncio.Lock objects are bound to an event loop.
-    # Since run_checker() uses asyncio.run() repeatedly (new loop each cycle),
-    # we must recreate domain locks per cycle to avoid "bound to a different event loop".
     _domain_locks.clear()
     _last_request_time.clear()
 
@@ -615,17 +670,32 @@ async def check_products() -> None:
         logger.warning("Список порожній.")
         return
 
-    logger.info(f"🚀 Початок перевірки {len(products_snapshot)} товарів...")
+    # Сортуємо: спочатку ті, що перевірялись найдавніше
+    products_snapshot.sort(key=lambda x: x.get("last_checked_iso") or "")
+
+    logger.info(f"[START] Checking {len(products_snapshot)} products (time limit: {max_runtime}s)...")
 
     connector = aiohttp.TCPConnector(limit=CONNECTOR_LIMIT, ssl=False)
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
-    updates_by_url: Dict[str, Dict] = {}
+    
+    # Ліміт одночасних запитів
+    MAX_CONC = 8 # Збільшено з 5 для швидкості
 
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
         with ThreadPoolExecutor() as executor:
-            sem = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+            sem = asyncio.Semaphore(MAX_CONC)
+            processed_count = 0
 
             async def process_one(idx: int, product: Dict) -> None:
+                nonlocal processed_count
+                
+                # Перевірка ліміту часу
+                elapsed = time.time() - start_time
+                if elapsed > max_runtime:
+                    if processed_count % 10 == 0: # Avoid logging too much
+                        logger.info(f"[TIMEOUT] Runtime limit reached ({elapsed:.1f}s). Skipping remaining.")
+                    return
+
                 product = normalize_product_defaults(product)
                 url = product.get("url")
                 if not url:
@@ -640,179 +710,171 @@ async def check_products() -> None:
                     now_iso = datetime.now().isoformat(timespec="seconds")
                     now_legacy = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                    if res["error"]:
-                        updates_by_url[url] = {
-                            "last_checked_iso": now_iso,
-                            "last_checked": now_legacy,
-                            "availability_code": "ERROR",
-                            "availability_text": "Помилка мережі/бан",
-                        }
-                        return
-
-                    data = res["data"] or {}
-
-                    if data.get("selector_error"):
-                        updates_by_url[url] = {
-                            "last_checked_iso": now_iso,
-                            "last_checked": now_legacy,
-                            "availability_code": "ERROR",
-                            "availability_text": "Помилка селектора",
-                        }
-                        await notify_selector_error(
-                            session,
-                            product.get("product_name", "Невідомий товар"),
-                            url,
-                            data["selector_error"],
-                        )
-                        return
-
-                    is_avail = data.get("is_available")
-                    price = data.get("price")
-                    scraped_img = data.get("image_url")
-                    manual_img = product.get("manual_image_url")
-                    image_current = manual_img or scraped_img
-
-                    availability_code = "AVAILABLE" if is_avail else "OUT_OF_STOCK"
-                    availability_text = data.get("availability_text") or (
-                        "В наявності" if is_avail else "Немає в наявності"
-                    )
-
-                    updates_by_url[url] = {
+                    update_payload = {
+                        "url": url, # Required for upsert
                         "last_checked_iso": now_iso,
                         "last_checked": now_legacy,
-                        "availability_code": availability_code,
-                        "availability_text": availability_text,
-                        "price_current": price,
-                        "price_text": format_price_text(price),
-                        "image_current": image_current,
-                        "is_available_last": is_avail,
-                        "price_last": price,
                     }
 
-                    await asyncio.sleep(RATE_LIMIT_DELAY + random.uniform(0.0, 0.3))
+                    if res["error"]:
+                        update_payload.update({
+                            "availability_code": "ERROR",
+                            "availability_text": "Помилка мережі/бан",
+                        })
+                    else:
+                        data = res["data"] or {}
+                        if data.get("selector_error"):
+                            update_payload.update({
+                                "availability_code": "ERROR",
+                                "availability_text": "Помилка селектора",
+                            })
+                            await notify_selector_error(
+                                session,
+                                product.get("product_name", "Невідомий товар"),
+                                url,
+                                data["selector_error"],
+                            )
+                        else:
+                            is_avail = data.get("is_available")
+                            price = data.get("price")
+                            scraped_img = data.get("image_url")
+                            manual_img = product.get("manual_image_url")
+                            image_current = manual_img or scraped_img
 
-            tasks = [process_one(i, p) for i, p in enumerate(products_snapshot, 1)]
-            await asyncio.gather(*tasks)
+                            availability_text = data.get("availability_text") or (
+                                "В наявності" if is_avail else "Немає в наявності"
+                            )
 
-    def mutator(products_from_disk: List[Dict]) -> List[Dict]:
-        updated = _merge_updates_into_products(products_from_disk, updates_by_url)
-        if len(updated) < len(products_from_disk):
-            logger.error("❌ Захист: спроба видалити продукти. Повертаємо оригінал.")
-            return products_from_disk
-        return updated
+                            availability_code = "AVAILABLE" if is_avail else "OUT_OF_STOCK"
 
-    update_products_locked(mutator)
+                            # Якщо поточне ім'я - заглушка, пробуємо замінити на спаршене
+                            current_name = product.get("product_name", "")
+                            scraped_name = data.get("product_name")
+                            if scraped_name and (not current_name or current_name == "Невідомий товар"):
+                                product["product_name"] = scraped_name
 
-    await _send_notifications_after_update(products_snapshot, updates_by_url)
-    logger.info("✅ Оновлення застосовано та збережено.")
+                            # Аналогічно для кольору
+                            current_color = product.get("color", "—")
+                            scraped_color = data.get("color")
+                            if scraped_color and (not current_color or current_color == "—"):
+                                product["color"] = scraped_color
 
+                            update_payload.update({
+                                "product_name": product.get("product_name"), 
+                                "color": product.get("color"),
+                                "availability_code": availability_code,
+                                "availability_text": availability_text,
+                                "price_current": price,
+                                "price_text": format_price_text(price),
+                                "image_current": image_current,
+                                "is_available_last": is_avail,
+                                "price_last": price,
+                            })
 
-async def _send_notifications_after_update(products_snapshot: List[Dict], updates_by_url: Dict[str, Dict]) -> None:
-    old_by_url = {p.get("url"): p for p in products_snapshot if p.get("url")}
+                            # --- НОВЕ: Сповіщення негайно ---
+                            notified = await _process_notifications_for_single(session, product, update_payload)
+                            if notified:
+                                await asyncio.sleep(1.0) # Small delay to avoid Telegram 429
 
-    # Вже оновлені дані з Supabase
-    products_final = load_products()
-
-    new_by_url = {p.get("url"): p for p in products_final if p.get("url")}
-
-    if not updates_by_url:
-        return
-
-    async with aiohttp.ClientSession() as session:
-        for url in updates_by_url.keys():
-            p_old = old_by_url.get(url)
-            p_new = new_by_url.get(url)
-
-            if not p_old or not p_new:
-                continue
-
-            if (p_new.get("availability_code") or "").upper() == "ERROR":
-                continue
-
-            last_avail = p_old.get("is_available_last")
-            last_price = p_old.get("price_last")
-            new_avail = p_new.get("is_available_last")
-            new_price = p_new.get("price_last")
-
-            should_notify = False
-            msg_parts = []
-
-            if NOTIFY_ON_FIRST_CHECK and last_avail is None and new_avail:
-                should_notify = True
-                msg_parts.append("🆕 <b>НОВИЙ ТОВАР В БАЗІ!</b> 🟢")
-                msg_parts.append("📊 Статус: В наявності")
-                if new_price:
-                    msg_parts.append(f"💰 Ціна: {new_price:.2f} грн")
-
-            elif NOTIFY_ON_AVAILABILITY_CHANGE and last_avail is not None and last_avail != new_avail:
-                should_notify = True
-                if new_avail:
-                    msg_parts.append("🎉 <b>НОВЕ НАДХОДЖЕННЯ!</b> 🟢")
-                else:
-                    msg_parts.append("⚠️ <b>ТОВАР ЗАКІНЧИВСЯ!</b> 🔴")
-
-            if NOTIFY_ON_PRICE_CHANGE and new_price is not None and last_price is not None:
-                diff = new_price - last_price
-                if last_price > 0:
-                    percent_change = abs(diff / last_price * 100)
-                    if percent_change >= MIN_PRICE_CHANGE_PERCENT:
-                        should_notify = True
-                        icon = "👇" if diff < 0 else "⬆️"
-                        msg_parts.append(
-                            f"💰 <b>ЗМІНА ЦІНИ!</b> {icon}\n"
-                            f"Стара: {last_price:.2f} грн → Нова: {new_price:.2f} грн\n"
-                            f"Різниця: {diff:+.2f} грн ({percent_change:.1f}%)"
-                        )
-
-            if should_notify:
-                # Determine event type
-                is_price_change = NOTIFY_ON_PRICE_CHANGE and new_price is not None and last_price is not None and abs(new_price - last_price) / (last_price or 1) * 100 >= MIN_PRICE_CHANGE_PERCENT
-                is_avail_change = NOTIFY_ON_AVAILABILITY_CHANGE and last_avail is not None and last_avail != new_avail
-                is_new_product = NOTIFY_ON_FIRST_CHECK and last_avail is None and new_avail
-                
-                # Custom status icon (flag for Primaveo as in screenshot 1)
-                status_icon = "🇮🇹" if "Primaveo" in (p_new.get("supplier") or "") else "📊"
-                
-                if is_price_change:
-                    diff = new_price - last_price
-                    percent_change = abs(diff / last_price * 100)
-                    price_icon = "⬆️" if diff > 0 else "⬇️"
+                    # Зберігаємо результат негайно, об'єднуючи з існуючими даними
+                    # Це критично важливо, щоб не стерти імена, постачальників та селектори!
+                    product.update(update_payload)
+                    save_products([product])
+                    processed_count += 1
                     
-                    full_message = (
-                        f"💰 <b>ЗМІНА ЦІНИ!</b> {price_icon}\n\n"
-                        f"📦 <b>{p_new.get('product_name')}</b>\n\n"
-                        f"Стара: {last_price:.2f} грн → Нова: {new_price:.2f} грн\n\n"
-                        f"Різниця: {diff:+.2f} грн ({percent_change:.1f}%)\n\n"
-                        f"🏪 Постачальник: {p_new.get('supplier', '—')}\n\n"
-                        f"🎨 Колір: {p_new.get('color', '—')}\n\n"
-                        f"🔗 <a href='{url}'>Посилання на товар</a>"
-                    )
-                elif is_avail_change:
-                    header = "🎉 <b>ЗНОВУ В НАЯВНОСТІ</b> 🟢" if new_avail else "⚠️ <b>ТОВАР ЗАКІНЧИВСЯ!</b> 🔴"
-                    full_message = (
-                        f"{header}\n\n"
-                        f"📦 <b>{p_new.get('product_name')}</b>\n\n"
-                        f"🎨 Колір: {p_new.get('color', '—')}\n\n"
-                        f"🏪 Постачальник: {p_new.get('supplier', '—')}\n\n"
-                        f"🔗 <a href='{url}'>Посилання на товар</a>"
-                    )
-                elif is_new_product:
-                    full_message = (
-                        f"🆕 <b>НОВИЙ ТОВАР В БАЗІ!</b> 🟢\n\n"
-                        f"📦 <b>{p_new.get('product_name')}</b>\n\n"
-                        f"{status_icon} Статус: {p_new.get('availability_text', '—')}\n\n"
-                        f"🎨 Колір: {p_new.get('color', '—')}\n\n"
-                        f"💰 Ціна: {new_price:.2f} грн\n\n"
-                        f"🏪 Постачальник: {p_new.get('supplier', '—')}\n\n"
-                        f"🔗 <a href='{url}'>Посилання на товар</a>"
-                    )
-                else:
-                    # Generic fallback just in case
-                    full_message = "\n".join(msg_parts) + f"\n\n📦 <b>{p_new.get('product_name')}</b>\n🔗 <a href='{url}'>Link</a>"
-                
-                logger.info(f"📨 Відправка сповіщення для: {p_new.get('product_name')}")
-                await send_telegram_async(session, full_message, photo_url=p_new.get('image_current'))
+                    await asyncio.sleep(RATE_LIMIT_DELAY + random.uniform(0.0, 0.2))
 
+            # Обробимо товари частинами (chunks) для кращого контролю таймауту
+            CHUNK_SIZE = MAX_CONC * 2
+            
+            for i in range(0, len(products_snapshot), CHUNK_SIZE):
+                # Перевірка ліміту часу ПЕРЕД наступною пачкою
+                elapsed = time.time() - start_time
+                if elapsed > max_runtime:
+                    logger.info(f"[TIMEOUT] Runtime limit reached ({elapsed:.1f}s). Skipping remaining chunks.")
+                    break
+                
+                chunk = products_snapshot[i : i + CHUNK_SIZE]
+                chunk_tasks = [process_one(i + j + 1, p) for j, p in enumerate(chunk)]
+                await asyncio.gather(*chunk_tasks)
+
+    logger.info(f"[DONE] Processing finished. Total: {processed_count} products.")
+
+
+async def _process_notifications_for_single(session: aiohttp.ClientSession, p_old: Dict, p_new: Dict) -> bool:
+    """Порівнює старий і новий стан одного товару та надсилає сповіщення."""
+    if (p_new.get("availability_code") or "").upper() == "ERROR":
+        return False
+
+    url = p_old.get("url")
+    last_avail = p_old.get("is_available_last")
+    last_price = p_old.get("price_last")
+    new_avail = p_new.get("is_available_last")
+    new_price = p_new.get("price_last")
+
+    should_notify = False
+    msg_parts = []
+
+    if NOTIFY_ON_FIRST_CHECK and last_avail is None and new_avail:
+        should_notify = True
+    elif NOTIFY_ON_AVAILABILITY_CHANGE and last_avail is not None and last_avail != new_avail:
+        should_notify = True
+
+    if NOTIFY_ON_PRICE_CHANGE and new_price is not None and last_price is not None:
+        diff = new_price - last_price
+        if last_price > 0:
+            percent_change = abs(diff / last_price * 100)
+            if percent_change >= MIN_PRICE_CHANGE_PERCENT:
+                should_notify = True
+
+    if not should_notify:
+        return False
+
+    # Формування повідомлення (аналогічно старій логіці, але для одного товару)
+    is_price_change = NOTIFY_ON_PRICE_CHANGE and new_price is not None and last_price is not None and abs(new_price - last_price) / (last_price or 1) * 100 >= MIN_PRICE_CHANGE_PERCENT
+    is_avail_change = NOTIFY_ON_AVAILABILITY_CHANGE and last_avail is not None and last_avail != new_avail
+    is_new_product = NOTIFY_ON_FIRST_CHECK and last_avail is None and new_avail
+    
+    status_icon = "🇮🇹" if "Primaveo" in (p_old.get("supplier") or "") else "📊"
+    
+    if is_price_change:
+        diff = new_price - last_price
+        percent_change = abs(diff / last_price * 100)
+        price_icon = "⬆️" if diff > 0 else "⬇️"
+        full_message = (
+            f"💰 <b>ЗМІНА ЦІНИ!</b> {price_icon}\n\n"
+            f"📦 <b>{p_old.get('product_name')}</b>\n\n"
+            f"Стара: {last_price:.2f} грн → Нова: {new_price:.2f} грн\n\n"
+            f"Різниця: {diff:+.2f} грн ({percent_change:.1f}%)\n\n"
+            f"🏪 Постачальник: {p_old.get('supplier', '—')}\n\n"
+            f"🎨 Колір: {p_old.get('color', '—')}\n\n"
+            f"🔗 <a href='{url}'>Посилання на товар</a>"
+        )
+    elif is_avail_change:
+        header = "🎉 <b>ЗНОВУ В НАЯВНОСТІ</b> 🟢" if new_avail else "⚠️ <b>ТОВАР ЗАКІНЧИВСЯ!</b> 🔴"
+        full_message = (
+            f"{header}\n\n"
+            f"📦 <b>{p_old.get('product_name')}</b>\n\n"
+            f"🎨 Колір: {p_old.get('color', '—')}\n\n"
+            f"💰 Ціна: {new_price:.2f} грн\n\n"
+            f"🏪 Постачальник: {p_old.get('supplier', '—')}\n\n"
+            f"🔗 <a href='{url}'>Посилання на товар</a>"
+        )
+    elif is_new_product:
+        full_message = (
+            f"🆕 <b>НОВИЙ ТОВАР В БАЗІ!</b> 🟢\n\n"
+            f"📦 <b>{p_old.get('product_name')}</b>\n\n"
+            f"🎨 Колір: {p_old.get('color', '—')}\n\n"
+            f"💰 Ціна: {new_price:.2f} грн\n\n"
+            f"🏪 Постачальник: {p_old.get('supplier', '—')}\n\n"
+            f"🔗 <a href='{url}'>Посилання на товар</a>"
+        )
+    else:
+        full_message = f"📊 <b>Оновлення товару:</b>\n{p_old.get('product_name')}\n🎨 Колір: {p_old.get('color', '—')}\n💰 Ціна: {new_price:.2f} грн\n🔗 <a href='{url}'>Link</a>"
+
+    logger.info(f"📨 Відправка сповіщення для: {p_old.get('product_name')}")
+    await send_telegram_async(session, full_message, photo_url=p_new.get('image_current'))
+    return True
 
 def run_checker() -> None:
     CHECK_INTERVAL = 15 * 60
