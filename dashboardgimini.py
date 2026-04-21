@@ -687,19 +687,7 @@ app.layout = html.Div(style=CONTAINER_STYLE, children=[
                 ]
             )
         ]
-    ),
-
-    # --- Debug Footer (Temporary for troubleshooting) ---
-    html.Div(id='debug-footer', style={
-        'marginTop': '30px',
-        'padding': '15px',
-        'backgroundColor': 'rgba(0,0,0,0.05)',
-        'borderRadius': '8px',
-        'fontSize': '11px',
-        'color': 'var(--text-sub)',
-        'textAlign': 'center',
-        'border': '1px solid var(--border)'
-    })
+    )
 ])
 
 # =========================================================================
@@ -928,22 +916,6 @@ def load_snapshot_callback(n_intervals, n_trigger, n_clicks_refresh):
     except Exception as e:
         logger.error(f"Snapshot load error: {e}")
         return {'timestamp': datetime.now().strftime('%d.%m.%Y %H:%M:%S'), 'df_json': None}, f"Error: {str(e)}"
-
-@app.callback(
-    Output('debug-footer', 'children'),
-    [Input('interval-component', 'n_intervals'),
-     Input('data-refresh-trigger', 'data')]
-)
-def update_debug_footer(n1, n2):
-    from product_data import SUPABASE_URL, SUPABASE_KEY, load_products
-    try:
-        raw_count = len(load_products())
-        url_status = SUPABASE_URL[:15] + "..." if SUPABASE_URL else "MISSING"
-        key_status = "PRESENT" if SUPABASE_KEY else "MISSING"
-        return f"DEBUG: URL={url_status} | Key={key_status} | Raw DB Count={raw_count}"
-    except Exception as e:
-        return f"DEBUG ERROR: {str(e)}"
-
 
 @app.callback(
     [Output('dashboard-table', 'children'),
