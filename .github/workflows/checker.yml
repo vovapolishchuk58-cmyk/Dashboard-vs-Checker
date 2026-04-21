@@ -35,5 +35,5 @@ jobs:
           python -c "
           import asyncio
           from checker import check_products
-          asyncio.run(check_products(max_runtime=500))
+          asyncio.run(check_products(max_runtime=1800))
           "
