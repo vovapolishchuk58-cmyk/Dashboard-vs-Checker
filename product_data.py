@@ -109,12 +109,17 @@ def save_products(products: List[Dict]) -> None:
     try:
         # Supabase Python client accepts a list of dictionaries for bulk insert/upsert
         # Remove empty string or None ids if present to let DB generate UUID if it's new
+        import uuid
         clean_products = []
         for p in products:
             cp = normalize_product_defaults(p)
-            # Filter out 'id' if None so it doesn't break UUID generation
-            if 'id' in cp and not cp['id']:
-                del cp['id']
+            # PostgREST bulk insert requires all objects to have the same keys,
+            # or missing keys will be treated as null. Since we have a mix of
+            # existing (with id) and new (without id) products, generate UUIDs
+            # for new ones to prevent "null value in column id" error.
+            if not cp.get('id'):
+                cp['id'] = str(uuid.uuid4())
+            
             # Supabase error protection: ignore "created_at" in upsert if passing it
             if 'created_at' in cp:
                 del cp['created_at']
