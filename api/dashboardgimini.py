@@ -875,6 +875,8 @@ def add_new_product(n_clicks, supplier, product_name, url, category, color,
         # ✅ NEW: lock timeout -> user-friendly message
         return (warn_file_busy_span(), dash.no_update, *empty_vals)
 
+    except PreventUpdate:
+        raise
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
@@ -1183,6 +1185,8 @@ def save_edit(n_clicks, item_url, product_name, supplier, category, color,
         return msg, (refresh_trigger or 0) + 1, {**MODAL_OVERLAY_STYLE, 'display': 'none'}, None
 
 
+    except PreventUpdate:
+        raise
     except Exception as e:
         return html.Span(f"{str(e)}", style={'color': 'var(--danger)'}), dash.no_update, dash.no_update, dash.no_update
 
@@ -1273,6 +1277,8 @@ def refresh_single_product(n_clicks_list, refresh_trigger):
         )
         return msg, (refresh_trigger or 0) + 1
 
+    except PreventUpdate:
+        raise
     except Exception as e:
         logger.error(f"Error in refresh_single_product: {e}")
         return html.Span(f"{str(e)}", style={'color': 'var(--danger)'}), dash.no_update
@@ -1301,6 +1307,8 @@ def delete_product(n_clicks_list, refresh_trigger):
         )
         return msg, (refresh_trigger or 0) + 1
 
+    except PreventUpdate:
+        raise
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
