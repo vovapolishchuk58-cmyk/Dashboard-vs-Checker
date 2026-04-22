@@ -113,12 +113,9 @@ def save_products(products: List[Dict]) -> None:
         clean_products = []
         for p in products:
             cp = normalize_product_defaults(p)
-            # PostgREST bulk insert requires all objects to have the same keys,
-            # or missing keys will be treated as null. Since we have a mix of
-            # existing (with id) and new (without id) products, generate UUIDs
-            # for new ones to prevent "null value in column id" error.
-            if not cp.get('id'):
-                cp['id'] = str(uuid.uuid4())
+            # Let DB generate UUID for new products if id is missing or empty
+            if not cp.get('id') and 'id' in cp:
+                del cp['id']
             
             # Supabase error protection: ignore "created_at" in upsert if passing it
             if 'created_at' in cp:

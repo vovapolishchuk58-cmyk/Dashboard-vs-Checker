@@ -258,7 +258,7 @@ def get_row_style_by_code(code: str) -> dict:
 
 app = dash.Dash(__name__, prevent_initial_callbacks='initial_duplicate')
 server = app.server
-app.title = "🛍️ Моніторинг товарів v2"
+app.title = "🛍️ Моніторинг товарів v3"
 
 # --- CSS зі змінними ---
 app.index_string = '''
@@ -458,7 +458,7 @@ app.layout = html.Div(style=CONTAINER_STYLE, children=[
     # Header
     html.Div(style=HEADER_STYLE, children=[
         html.Div([
-            html.H1("🛍️ Моніторинг товарів v2", style={'margin': 0, 'fontSize': '24px', 'fontWeight': '700'}),
+            html.H1("🛍️ Моніторинг товарів v3", style={'margin': 0, 'fontSize': '24px', 'fontWeight': '700'}),
             html.Span("Контроль цін та наявності", style={'fontSize': '13px', 'opacity': 0.8, 'display': 'block', 'marginTop': '4px'})
         ]),
         html.Button('🌙', id='theme-toggle-btn', className='theme-toggle-btn', title="Змінити тему")
@@ -876,11 +876,14 @@ def add_new_product(n_clicks, supplier, product_name, url, category, color,
         return (warn_file_busy_span(), dash.no_update, *empty_vals)
 
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"Add product error: {error_details}")
         return (
-            html.Span(
-                f"❌ Помилка: {str(e)}",
-                style={'color': 'var(--danger)', 'padding': '10px', 'backgroundColor': 'var(--danger-bg)', 'borderRadius': '8px', 'display': 'block'}
-            ),
+            html.Div([
+                html.Span(f"❌ Помилка: {str(e)}", style={'color': 'var(--danger)', 'fontWeight': 'bold'}),
+                html.Pre(error_details, style={'fontSize': '10px', 'marginTop': '10px', 'whiteSpace': 'pre-wrap', 'color': 'var(--text-sub)'})
+            ], style={'padding': '10px', 'backgroundColor': 'var(--danger-bg)', 'borderRadius': '8px'}),
             dash.no_update,
             *empty_vals
         )
@@ -1256,6 +1259,9 @@ def refresh_single_product(n_clicks_list, refresh_trigger):
                     "is_available_last": is_avail,
                     "price_last": price,
                 })
+                # Let DB generate UUID for new products if id is missing or empty
+                if not p.get('id') and 'id' in p:
+                    del p['id']
                 products[idx] = p
             return products
 
@@ -1295,9 +1301,14 @@ def delete_product(n_clicks_list, refresh_trigger):
         )
         return msg, (refresh_trigger or 0) + 1
 
-
-    except Exception:
-        raise PreventUpdate
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"Delete product error: {error_details}")
+        return html.Div([
+            html.Span(f"❌ Помилка видалення: {str(e)}", style={'color': 'var(--danger)', 'fontWeight': 'bold'}),
+            html.Pre(error_details, style={'fontSize': '10px', 'marginTop': '10px', 'whiteSpace': 'pre-wrap'})
+        ], style={'padding': '10px', 'backgroundColor': 'var(--danger-bg)', 'borderRadius': '8px'}), dash.no_update
 
 
 
