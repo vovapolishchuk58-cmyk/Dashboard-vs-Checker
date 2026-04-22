@@ -10,7 +10,7 @@
     "api/cron.py": {
       "maxDuration": 60
     },
-    "dashboardgimini.py": {
+    "api/dashboardgimini.py": {
       "maxDuration": 60
     }
   },
@@ -21,7 +21,7 @@
     },
     {
       "src": "/(.*)",
-      "dest": "dashboardgimini.py"
+      "dest": "api/dashboardgimini.py"
     }
   ]
 }
