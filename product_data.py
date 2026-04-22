@@ -142,3 +142,17 @@ def update_products_locked(mutator_fn: Callable[[List[Dict]], List[Dict]]) -> No
         save_products(mutated_products)
     except Exception as e:
          print(f"[ERROR] update_products_locked failed: {e}")
+
+def delete_product_by_url(url: str) -> None:
+    """
+    Видаляє продукт з бази даних Supabase за вказаним URL.
+    """
+    if not supabase:
+        print("❌ Supabase не налаштовано. Видалення неможливе.")
+        return
+
+    try:
+        response = supabase.table("products").delete().eq("url", url).execute()
+        print(f"[OK] Product deleted from Supabase (url: {url})")
+    except Exception as e:
+        print(f"[ERROR] Supabase delete failed: {e}")

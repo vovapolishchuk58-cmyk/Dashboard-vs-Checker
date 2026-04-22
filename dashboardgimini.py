@@ -28,6 +28,7 @@ from product_data import (
     load_products,
     save_products,
     update_products_locked, # Added
+    delete_product_by_url,
 )
 from checker import get_product_data_async, format_price_text # Added
 
@@ -861,8 +862,8 @@ def add_new_product(n_clicks, supplier, product_name, url, category, color,
             'manual_image_url': manual_image or None,
         })
 
-        products_list.append(new_product)
-        save_products(products_list)
+        # Only upsert the new product to save time and avoid timeouts
+        save_products([new_product])
 
         msg = html.Span(
             "✅ Товар додано.",
@@ -1169,8 +1170,8 @@ def save_edit(n_clicks, item_url, product_name, supplier, category, color,
         if p['manual_image_url']:
             p['image_current'] = p['manual_image_url']
 
-        products_list[idx] = p
-        save_products(products_list)
+        # Only upsert the edited product to save time and avoid timeouts
+        save_products([p])
 
         msg = html.Span(
             "✅ Зміни збережено.",
@@ -1286,13 +1287,8 @@ def delete_product(n_clicks_list, refresh_trigger):
         ctx = dash.callback_context
         url = safe_get_triggered_url(ctx, "delete_product")
 
-        products_list = load_products()
-        new_list = [p for p in products_list if p.get('url') != url]
+        delete_product_by_url(url)
 
-        if len(new_list) == len(products_list):
-            raise PreventUpdate
-
-        save_products(new_list)
         msg = html.Span(
             "✅ Товар видалено.",
             style={'color': 'var(--success-text)', 'padding': '10px', 'backgroundColor': 'var(--success-bg)', 'borderRadius': '8px', 'display': 'block'}
