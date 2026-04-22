@@ -258,7 +258,7 @@ def get_row_style_by_code(code: str) -> dict:
 
 app = dash.Dash(__name__, prevent_initial_callbacks='initial_duplicate')
 server = app.server
-app.title = "🛍️ Моніторинг товарів v5"
+app.title = "🛍️ Моніторинг товарів v6"
 
 # --- CSS зі змінними ---
 app.index_string = '''
@@ -458,7 +458,7 @@ app.layout = html.Div(style=CONTAINER_STYLE, children=[
     # Header
     html.Div(style=HEADER_STYLE, children=[
         html.Div([
-            html.H1("🛍️ Моніторинг товарів v5", style={'margin': 0, 'fontSize': '24px', 'fontWeight': '700'}),
+            html.H1("🛍️ Моніторинг товарів v6", style={'margin': 0, 'fontSize': '24px', 'fontWeight': '700'}),
             html.Span("Контроль цін та наявності", style={'fontSize': '13px', 'opacity': 0.8, 'display': 'block', 'marginTop': '4px'})
         ]),
         html.Button('🌙', id='theme-toggle-btn', className='theme-toggle-btn', title="Змінити тему")
