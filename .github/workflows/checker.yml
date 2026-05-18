@@ -1,11 +1,7 @@
 name: Product Availability Checker
 
 on:
-  schedule:
-    # Запуск кожні 2 години (UTC). Мінімальний інтервал у GitHub Actions — 5 хвилин,
-    # але для стабільності рекомендується не частіше ніж кожну годину.
-    - cron: '0 */2 * * *'
-  workflow_dispatch:  # Можливість запустити вручну через GitHub UI
+  workflow_dispatch:  # Запуск тільки вручну через GitHub UI (або через API)
 
 jobs:
   check:

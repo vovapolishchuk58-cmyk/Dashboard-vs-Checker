@@ -839,7 +839,7 @@ async def _process_notifications_for_single(session: aiohttp.ClientSession, p_ol
     
     if is_price_change:
         diff = new_price - last_price
-        percent_change = abs(diff / last_price * 100)
+        percent_change = abs(diff / (last_price or 1) * 100)
         price_icon = "⬆️" if diff > 0 else "⬇️"
         full_message = (
             f"💰 <b>ЗМІНА ЦІНИ!</b> {price_icon}\n\n"

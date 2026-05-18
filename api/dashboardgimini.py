@@ -7,6 +7,7 @@
 # ------------------------------------------------------------
 
 import os
+import sys
 import ast
 import json
 import traceback
@@ -22,6 +23,12 @@ from dash.dependencies import Input, Output, State, ALL
 from dash.exceptions import PreventUpdate
 
 logger = logging.getLogger(__name__)
+
+# Fix for absolute imports from the root directory
+sys_path_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if sys_path_dir not in sys.path:
+    sys.path.append(sys_path_dir)
+
 
 from product_data import (
     normalize_product_defaults,
@@ -458,7 +465,7 @@ app.layout = html.Div(style=CONTAINER_STYLE, children=[
     # Header
     html.Div(style=HEADER_STYLE, children=[
         html.Div([
-            html.H1("🛍️ Моніторинг товарів v6", style={'margin': 0, 'fontSize': '24px', 'fontWeight': '700'}),
+            html.H1("🛍️ Моніторинг товарів", style={'margin': 0, 'fontSize': '24px', 'fontWeight': '700'}),
             html.Span("Контроль цін та наявності", style={'fontSize': '13px', 'opacity': 0.8, 'display': 'block', 'marginTop': '4px'})
         ]),
         html.Button('🌙', id='theme-toggle-btn', className='theme-toggle-btn', title="Змінити тему")
@@ -873,7 +880,8 @@ def add_new_product(n_clicks, supplier, product_name, url, category, color,
 
     except TimeoutError:
         # ✅ NEW: lock timeout -> user-friendly message
-        return (warn_file_busy_span(), dash.no_update, *empty_vals)
+        warn_span = html.Span("⏳ База даних зайнята (йде оновлення). Спробуйте пізніше.", style={'color': 'var(--warning-text)', 'padding': '10px', 'backgroundColor': 'var(--warning-bg)', 'borderRadius': '8px', 'display': 'block'})
+        return (warn_span, dash.no_update, *empty_vals)
 
     except PreventUpdate:
         raise
