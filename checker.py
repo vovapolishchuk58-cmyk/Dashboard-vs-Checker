@@ -670,10 +670,36 @@ async def check_products(max_runtime: int = 50) -> None:
         logger.warning("Список порожній.")
         return
 
-    # Сортуємо: спочатку ті, що перевірялись найдавніше
-    products_snapshot.sort(key=lambda x: x.get("last_checked_iso") or "")
+    # РОЗРАХУНОК ТАЙМАУТУ (Ліміт Vercel 4 години на 30 днів)
+    # 130 секунд таймауту на кожен товар у базі
+    # (Для 200 товарів: 200 * 130 = 26000 сек = ~7.2 годин між циклами)
+    # Це гарантує, що функція працюватиме максимум ~3.3 години на місяць.
+    now = datetime.now()
+    min_delay_seconds = len(products_snapshot) * 130 
+    
+    products_to_check = []
+    for p in products_snapshot:
+        last_checked_str = p.get("last_checked_iso")
+        if not last_checked_str:
+            products_to_check.append(p)
+            continue
+            
+        try:
+            last_checked = datetime.fromisoformat(last_checked_str)
+            seconds_since_check = (now - last_checked).total_seconds()
+            if seconds_since_check > min_delay_seconds:
+                products_to_check.append(p)
+        except Exception:
+            products_to_check.append(p)
 
-    logger.info(f"[START] Checking {len(products_snapshot)} products (time limit: {max_runtime}s)...")
+    if not products_to_check:
+        logger.info(f"⏸️ Пауза між циклами. Всі {len(products_snapshot)} товарів перевірені недавно. Таймаут: {min_delay_seconds/3600:.1f} год.")
+        return
+
+    # Сортуємо: спочатку ті, що перевірялись найдавніше
+    products_to_check.sort(key=lambda x: x.get("last_checked_iso") or "")
+
+    logger.info(f"[START] Checking {len(products_to_check)} products (out of {len(products_snapshot)}) (time limit: {max_runtime}s)...")
 
     connector = aiohttp.TCPConnector(limit=CONNECTOR_LIMIT, ssl=False)
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
@@ -787,14 +813,14 @@ async def check_products(max_runtime: int = 50) -> None:
             # Обробимо товари частинами (chunks) для кращого контролю таймауту
             CHUNK_SIZE = MAX_CONC * 2
             
-            for i in range(0, len(products_snapshot), CHUNK_SIZE):
+            for i in range(0, len(products_to_check), CHUNK_SIZE):
                 # Перевірка ліміту часу ПЕРЕД наступною пачкою
                 elapsed = time.time() - start_time
                 if elapsed > max_runtime:
                     logger.info(f"[TIMEOUT] Runtime limit reached ({elapsed:.1f}s). Skipping remaining chunks.")
                     break
                 
-                chunk = products_snapshot[i : i + CHUNK_SIZE]
+                chunk = products_to_check[i : i + CHUNK_SIZE]
                 chunk_tasks = [process_one(i + j + 1, p) for j, p in enumerate(chunk)]
                 await asyncio.gather(*chunk_tasks)
 
